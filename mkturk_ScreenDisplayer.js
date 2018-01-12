@@ -1,7 +1,16 @@
-
 class ScreenDisplayer{
+    constructor(bounds){
 
-    constructor(){
+        this.calibrateBounds(bounds)
+        this.last_fixation_xcentroid = undefined 
+        this.last_fixation_ycentroid = undefined
+        this.last_fixation_diameter = undefined 
+        
+        this.last_eyeFixation_xcentroid = undefined
+        this.last_eyeFixation_ycentroid = undefined
+        this.last_eyeFixation_diameter = undefined
+        this.last_eyeFixation_drawn = undefined
+
         this._sequence_canvases = {} // key: sequence. key: frame. value: canvas 
         this.canvas_sequences = {} // key: sequence_id
         this.time_sequences = {} // key: sequence_id
@@ -13,25 +22,271 @@ class ScreenDisplayer{
 
         this.canvas_reward = this.createCanvas('canvas_reward')
         this.canvas_punish = this.createCanvas('canvas_punish')
-
-
         this.canvas_fixation = this.createCanvas('canvas_fixation', true)
-
-
-        this.renderReward(this.canvas_reward)
-        this.renderPunish(this.canvas_punish) 
-    }
-    async displaySequence(sequence_id){
-        console.log('displaying sequence ', sequence_id)
-        var sequence = this.canvas_sequences[sequence_id]
-        var tsequence = this.time_sequences[sequence_id]
-        var frame_unix_timestamps = await this.displayScreenSequence(sequence, tsequence)
-
-        return frame_unix_timestamps
+        
+        this.resizeTimeout = false
     }
 
-    togglePlayspaceBorder(on_or_off){
-        // Turns on / off the dotted PLAYSPACE border
+    async build(){
+
+        await this.renderBlank(this.canvas_blank)
+        await this.renderReward(this.canvas_reward)
+        await this.renderPunish(this.canvas_punish) 
+
+    }
+
+    calibrateBounds(bounds){
+        // Called by Playspace whenever the window size changes 
+
+        this.height = bounds['height']
+        this.width = bounds['width'] 
+
+        this.leftBound = bounds['leftBound']
+        this.rightBound = bounds['rightBound']
+        this.topBound = bounds['topBound']
+        this.bottomBound = bounds['bottomBound']
+
+    }   
+
+    getSequenceCanvas(sequence_id, i_frame){
+        if(this._sequence_canvases[sequence_id] == undefined){
+            this._sequence_canvases[sequence_id] = []
+        }
+        if(this._sequence_canvases[sequence_id][i_frame] == undefined){
+            this._sequence_canvases[sequence_id][i_frame] = this.createCanvas(sequence_id+'_frame'+i_frame)
+        }
+
+        return this._sequence_canvases[sequence_id][i_frame]
+    }
+
+   
+    async bufferStimulusSequence(stimulusFramePackage){
+        var sampleImage = stimulusFramePackage['sampleImage'] 
+        var sampleOn = stimulusFramePackage['sampleOn'] 
+        var sampleOff = stimulusFramePackage['sampleOff'] 
+        var sampleDiameterPixels = stimulusFramePackage['sampleDiameterPixels'] 
+        var sampleXCentroid = stimulusFramePackage['sampleXCentroid'] 
+        var sampleYCentroid = stimulusFramePackage['sampleYCentroid']
+        var choiceImage = stimulusFramePackage['choiceImage'] 
+        var choiceDiameterPixels = stimulusFramePackage['choiceDiameterPixels'] 
+        var choiceXCentroid = stimulusFramePackage['choiceXCentroid'] 
+        var choiceYCentroid = stimulusFramePackage['choiceYCentroid']        
+
+        var frame_canvases = []
+        var frame_durations = []
+        // Draw sample screen
+        var sampleCanvas = this.getSequenceCanvas('stimulus_sequence', 0)
+        await this.renderBlank(sampleCanvas) // todo: only do this on window resize
+        await this.drawImagesOnCanvas(sampleImage, sampleXCentroid, sampleYCentroid, sampleDiameterPixels, sampleCanvas)
+        frame_canvases.push(sampleCanvas)
+        frame_durations.push(sampleOn)
+
+        // Optionally draw blank delay screen
+        if(sampleOff > 0){
+            var delayCanvas = this.getSequenceCanvas('stimulus_sequence', 1)
+            await this.renderBlank(delayCanvas) // todo: only do this on window resize
+            delayCanvas = await this.renderBlank(blankCanvas)
+            frame_canvases.push(delayCanvas)
+            frame_durations.push(sampleOff)
+        }
+
+        // Draw test screen
+        var testCanvas = this.getSequenceCanvas('stimulus_sequence', frame_canvases.length)
+        await this.renderBlank(testCanvas) // todo: only do this on window resize
+        await this.drawImagesOnCanvas(choiceImage, choiceXCentroid, choiceYCentroid, choiceDiameterPixels, testCanvas)
+        frame_canvases.push(testCanvas)
+        frame_durations.push(0)
+
+        this.canvas_sequences['stimulus_sequence'] = frame_canvases
+        this.time_sequences['stimulus_sequence'] = frame_durations
+
+    }
+
+    async drawImagesOnCanvas(images, 
+        xcentroids_pixels, 
+        ycentroids_pixels,
+        diameter_pixels,
+        canvasobj){
+
+        if(images.constructor == Array){
+                // Iterate over the images in this frame and draw them all
+                for (var i_image = 0; i_image<images.length; i_image++){
+
+                    await this._drawImage(
+                        images[i_image], 
+                        xcentroids_pixels[i_image], 
+                        ycentroids_pixels[i_image], 
+                        diameter_pixels[i_image], 
+                        canvasobj)
+                }
+            }
+
+            else{
+                await this._drawImage(images, xcentroids_pixels, 
+                    ycentroids_pixels,
+                    diameter_pixels,
+                    canvasobj)
+            }
+        }
+
+    async _drawImage(image, xcentroid_pixel, ycentroid_pixel, diameter_pixels, canvasobj){
+
+        // Special cases for 'image'
+        if(image == 'dot'){
+            await this.drawDot(xcentroid_pixel, ycentroid_pixel, diameter_pixels, 'white', canvasobj)
+            return
+        }
+        if(image == 'blank'){
+            await this.renderBlank(canvasobj)
+            return
+        }
+
+        var nativeWidth = image.naturalWidth 
+        var nativeHeight = image.naturalHeight
+
+        if (nativeHeight > nativeWidth){
+            var drawHeight = diameter_pixels
+            var drawWidth = diameter_pixels * nativeWidth / nativeHeight
+        }
+        else{
+            var drawWidth = diameter_pixels 
+            var drawHeight = diameter_pixels * nativeHeight / nativeWidth
+        }
+
+        // in units of window
+        var original_left_start = xcentroid_pixel - diameter_pixels/2 // in virtual pixel coordinates
+        var original_top_start = ycentroid_pixel - diameter_pixels/2
+
+        var context = canvasobj.getContext('2d')
+        await context.drawImage(image, original_left_start, original_top_start, drawWidth, drawHeight)
+
+        return 
+    }
+
+ 
+async bufferFixation(fixationFramePackage){
+
+    var xcentroid_pixel = fixationFramePackage['fixationXCentroidPixels'] 
+    var ycentroid_pixel = fixationFramePackage['fixationYCentroidPixels']
+    var fixationDiameter_pixels = fixationFramePackage['fixationDiameterPixels'] 
+    // input arguments in playspace units 
+
+    // Clear canvas if different 
+    if (this.last_fixation_xcentroid == xcentroid_pixel 
+        && this.last_fixation_ycentroid == ycentroid_pixel
+        && this.last_fixation_diameter == fixationDiameter_pixels
+        && this.last_eyeFixation_xcentroid == fixationFramePackage['eyeFixationXCentroidPixels']
+        && this.last_eyeFixation_ycentroid == fixationFramePackage['eyeFixationYCentroidPixels']
+        && this.last_eyeFixation_diameter == fixationFramePackage['eyeFixationDiameterPixels']
+        && this.last_eyeFixation_drawn == fixationFramePackage['drawEyeFixationDot']
+        ){
+        // TODO also check for changes to eye fixation
+        return 
+    }
+
+    await this.renderBlank(this.canvas_fixation)
+
+    // Draw touch initiation dot
+    await this.drawDot(
+                    xcentroid_pixel, 
+                    ycentroid_pixel, 
+                    fixationDiameter_pixels, 
+                    'white', 
+                    this.canvas_fixation)
+
+    // Draw eye fixation dot 
+    if(fixationFramePackage['drawEyeFixationDot'] == true){
+        await this.drawDot(
+                            fixationFramePackage['eyeFixationXCentroidPixels'], 
+                            fixationFramePackage['eyeFixationYCentroidPixels'], 
+                            fixationFramePackage['eyeFixationDiameterPixels'], 
+                            '#2d2d2d', 
+                            this.canvas_fixation
+                        )
+    } 
+   
+
+    this.last_fixation_xcentroid = xcentroid_pixel
+    this.last_fixation_ycentroid = ycentroid_pixel
+    this.last_fixation_diameter = fixationDiameter_pixels
+    this.last_eyeFixation_xcentroid = fixationFramePackage['eyeFixationXCentroidPixels']
+    this.last_eyeFixation_ycentroid = fixationFramePackage['eyeFixationYCentroidPixels']
+    this.last_eyeFixation_diameter = fixationFramePackage['eyeFixationDiameterPixels']
+    this.last_eyeFixation_drawn = fixationFramePackage['drawEyeFixationDot']
+}
+
+async drawText(textString, fontSize, color, xcentroid_pixel, ycentroid_pixel, canvasobj){
+    var context = canvasobj.getContext('2d')
+    fontSize = fontSize || 8
+    color = color || 'black'
+    context.font = fontSize+"px Arial"
+    context.fillStyle = color
+    context.fillText(textString, xcentroid_pixel, ycentroid_pixel)
+    context.fill()
+
+}
+
+async drawDot(xcentroid_pixel, ycentroid_pixel, diameter_pixel, color, canvasobj){
+    var context=canvasobj.getContext('2d');
+
+    context.beginPath();
+    context.arc(xcentroid_pixel,ycentroid_pixel,diameter_pixel/2,0*Math.PI,2*Math.PI);
+    context.fillStyle=color; 
+    context.fill();
+}
+
+
+renderBlank(canvasobj){
+    if (canvasobj.constructor != Array){
+        canvasobj = [canvasobj]
+    }
+
+    for (var i in canvasobj){
+        var i_canvasobj = canvasobj[i]
+        var context=i_canvasobj.getContext('2d');
+        context.fillStyle="#7F7F7F";
+        var width = parseFloat(i_canvasobj.style.width)
+        var height = parseFloat(i_canvasobj.style.height)
+
+        context.fillRect(0,0,width,height);
+        context.fill()
+
+    }
+    
+}
+
+async displayFixation(){
+    var timestamps = await this.displayScreenSequence(this.canvas_fixation, 0)
+    return timestamps[0]
+}
+
+async displayBlank(){
+    await this.displayScreenSequence(this.canvas_blank, 0)
+}
+
+
+async displayStimulusSequence(){
+    var timestamps = await this.displayScreenSequence(
+        this.canvas_sequences['stimulus_sequence'], 
+        this.time_sequences['stimulus_sequence'])
+    return timestamps
+}
+
+
+async displayReward(msec_duration){
+    var timestamps = await this.displayScreenSequence([this.canvas_blank, this.canvas_reward, this.canvas_blank],
+        [0, msec_duration, 0])
+    return timestamps
+}
+
+async displayPunish(msec_duration){
+    var timestamps = await this.displayScreenSequence([this.canvas_blank, this.canvas_punish, this.canvas_blank],
+        [0, msec_duration, 0])
+    return timestamps
+}
+
+togglePlayspaceBorder(on_or_off){
+        // Turns on / off the dotted border
         if(on_or_off == 1){
             var bs = '1px dotted #E6E6E6' // border style 
         }
@@ -52,114 +307,18 @@ class ScreenDisplayer{
         }
     }
 
-    async bufferSequenceFrames(sequence_id, image_sequence, grid_placement_sequence, frame_durations){
 
-        var num_frames = image_sequence.length
-        
-        // Draw the images on each of the canvases in this sequence
-        var canvas_sequence = []
-        for (var i_frame = 0; i_frame<num_frames; i_frame++){
-            var frame_grid_indices = grid_placement_sequence[i_frame]
-            var frame_images = image_sequence[i_frame]
-            var canvasobj = this.getSequenceCanvas(sequence_id, i_frame)
-
-
-            if(frame_images.constructor == Array){
-                // Iterate over the images in this frame and draw them all
-                for (var i_image = 0; i_image<frame_images.length; i_image++){
-                    await this.renderImageAndScaleIfNecessary(frame_images[i_image], frame_grid_indices[i_image], canvasobj)
-                }
-            }
-
-            else{
-                // Draw the single image in this frame 
-
-                if(frame_grid_indices.constructor == Array){
-                    frame_grid_indices = frame_grid_indices[0]
-                }
-                
-                await this.renderImageAndScaleIfNecessary(frame_images, frame_grid_indices, canvasobj)
-            }
-            
-            canvas_sequence.push(canvasobj)
-        
-        }
-
-        this.canvas_sequences[sequence_id] = canvas_sequence
-        this.time_sequences[sequence_id] = frame_durations
-    }   
-
-    async displayBlank(){
-        await this.renderBlank(this.canvas_blank)
-        await this.displayScreenSequence(this.canvas_blank, 0)
-    }
-
-    async displayFixation(gridindex){
-        await this.renderBlank(this.canvas_fixation)
-
-        var boundingBoxesFixation = this.renderFixationDot(gridindex, PLAYSPACE._gridwidth*0.4, 'white', this.canvas_fixation)
-        var frame_timestamps = await this.displayScreenSequence(this.canvas_fixation, 0)
-        return [boundingBoxesFixation, frame_timestamps]
-    }
-
-    async displayReward(msec_duration){
-        var frame_unix_timestamps = await this.displayScreenSequence([this.canvas_blank, this.canvas_reward, this.canvas_blank],
-            [0, msec_duration, 0])
-        return frame_unix_timestamps
-    }
-    async displayPunish(msec_duration){
-        var frame_unix_timestamps = await this.displayScreenSequence([this.canvas_blank, this.canvas_punish, this.canvas_blank],
-            [0, msec_duration, 0])
-
-
-        return frame_unix_timestamps
-    }
-    renderFixationDot( gridindex, dot_pixelradius, color, canvasobj){
-        var context=canvasobj.getContext('2d');
-
-        // do not clear in case user would like to draw multiple
-
-        // Draw fixation dot
-        var rad = dot_pixelradius;
-        var xcent = PLAYSPACE._xgridcent[gridindex]; // playspace units
-        var ycent = PLAYSPACE._ygridcent[gridindex];
-        context.beginPath();
-        context.arc(xcent,ycent,rad,0*Math.PI,2*Math.PI);
-        context.fillStyle=color; 
-        context.fill();
-
-        // Define (rectangular) boundaries of fixation
-        var boundingBoxesFixation = {'x':[xcent-rad, xcent+rad], 'y':[ycent-rad, ycent+rad]}
-
-        return boundingBoxesFixation
-
-
-    }
-    getSequenceCanvas(sequence_id, i_frame){
-        if(this._sequence_canvases[sequence_id] == undefined){
-            this._sequence_canvases[sequence_id] = []
-        }
-        if(this._sequence_canvases[sequence_id][i_frame] == undefined){
-            this._sequence_canvases[sequence_id][i_frame] = this.createCanvas(sequence_id+'_frame'+i_frame)
-        }
-
-        return this._sequence_canvases[sequence_id][i_frame]
-    }
     createCanvas(canvas_id, use_image_smoothing){
         use_image_smoothing = false || use_image_smoothing
         var canvasobj = document.createElement('canvas')
         canvasobj.id = canvas_id
-        setupCanvas(canvasobj, use_image_smoothing)
+        this.setupCanvas(canvasobj, use_image_smoothing)
         document.body.appendChild(canvasobj)
         return canvasobj 
     }
 
-    
-
-
-
     displayScreenSequence(sequence, t_durations){
-        console.log('calling sequence', sequence, 't_durations', t_durations)
+        //console.log('calling screen sequence. t_durations', t_durations)
         if(typeof(t_durations) == "number"){
             t_durations = [t_durations]
         }
@@ -187,7 +346,7 @@ class ScreenDisplayer{
 
 
         function updateCanvas(timestamp){
-        
+
             // If time to show new frame OR first frame, 
             if (timestamp - lastframe_timestamp >= t_durations[current_frame_index] || lastframe_timestamp == undefined){
                 current_frame_index++;
@@ -199,7 +358,7 @@ class ScreenDisplayer{
                 prev_canvasobj = curr_canvasobj;
 
                 lastframe_timestamp = timestamp
-                console.log('lastframe_timestamp', lastframe_timestamp)
+                //console.log('lastframe_timestamp', lastframe_timestamp)
                 frames_left_to_animate--
                 
             }; 
@@ -217,43 +376,38 @@ class ScreenDisplayer{
         window.requestAnimationFrame(updateCanvas); // kick off async work
         return p
     } 
-    renderBlank(canvasobj){
+    
+
+    drawRectangle(canvasobj, width_pixels, height_pixels, color, alpha){
         var context=canvasobj.getContext('2d');
-        context.fillStyle="#7F7F7F";
+        context.fillStyle=color 
+        context.globalAlpha = alpha
         var width = parseFloat(canvasobj.style.width)
         var height = parseFloat(canvasobj.style.height)
 
-        context.fillRect(0,0,width,height);
-        context.fill()
-    }
-
-
-    renderReward(canvasobj){
-        var context=canvasobj.getContext('2d');
-        context.fillStyle="#00cc00";
-        context.globalAlpha = 0.5
-        var width = parseFloat(canvasobj.style.width)
-        var height = parseFloat(canvasobj.style.height)
-
-
-        var square_width = PLAYSPACE._gridwidth * 2
-        var square_height = PLAYSPACE._gridheight * 2
+        var square_width = width_pixels
+        var square_height = height_pixels
         context.fillRect(width/2 - square_width/2,height/2 - square_width/2, square_width,square_height);
 
         context.fill()
+    }
+    renderReward(canvasobj){
+        var rewardColor =  "#00cc00"
+        var rewardAlpha = 0.5
+        var width_pixels = this.width * 2/3
+        var height_pixels = this.height * 2/3 
+        this.drawRectangle(canvasobj, width_pixels, height_pixels, rewardColor, rewardAlpha)
     }
 
     renderPunish(canvasobj){
-        var context=canvasobj.getContext('2d');
-        var width = parseFloat(canvasobj.style.width)
-        var height = parseFloat(canvasobj.style.height)
 
-        context.fillStyle="black";
-        var square_width = PLAYSPACE._gridwidth * 2
-        var square_height = PLAYSPACE._gridheight * 2
-        context.fillRect(width/2 - square_width/2,height/2 - square_width/2, square_width,square_height);
+        var punishColor = 'black'
+        var punishAlpha = 1
         
-        context.fill();
+        var width_pixels = this.width * 2/3
+        var height_pixels = this.height* 2/3 
+
+        this.drawRectangle(canvasobj, width_pixels, height_pixels, punishColor, punishAlpha)
     }
 
 
@@ -265,9 +419,6 @@ class ScreenDisplayer{
 
         context.drawImage(image, dx, dy, dwidth, dheight)
 
-
-         
-
         var _boundingBox = [{}]
         _boundingBox[0].x = [dx,dx+dwidth]
         _boundingBox[0].y = [dy, dy+dheight]
@@ -275,49 +426,72 @@ class ScreenDisplayer{
         return _boundingBox
     }
 
-    async renderImageAndScaleIfNecessary(image, grid_index, canvasobj){
-      // Render image onto the playspace
-
-      // Special cases for 'image'
-      if(image == 'dot'){
-        await this.renderFixationDot(grid_index, PLAYSPACE._gridwidth*0.45, "white", canvasobj)
-        return
-      }
-      if(image == 'blank'){
-        await this.renderBlank(canvasobj)
-        return
-      }
-
+    setupCanvas(canvasobj, use_image_smoothing){
+      use_image_smoothing =  use_image_smoothing || false 
       var context = canvasobj.getContext('2d')
 
       var devicePixelRatio = window.devicePixelRatio || 1
       var backingStoreRatio = context.webkitBackingStorePixelRatio ||
-        context.mozBackingStorePixelRatio ||
-        context.msBackingStorePixelRatio ||
-        context.oBackingStorePixelRatio ||
-        context.backingStorePixelRatio || 1 // /1 by default for chrome?
+      context.mozBackingStorePixelRatio ||
+      context.msBackingStorePixelRatioproportion2pixels ||
+      context.oBackingStorePixelRatio ||
+      context.backingStorePixelRatio || 1 // /1 by default for chrome?
 
       var _ratio = devicePixelRatio / backingStoreRatio
 
-      var original_left_start = PLAYSPACE._xgridcent[grid_index] - PLAYSPACE._gridwidth/2// in virtual pixel coordinates
-      var original_top_start = PLAYSPACE._ygridcent[grid_index] - PLAYSPACE._gridheight/2
+
+      canvasobj.width = this.width * _ratio;
+      canvasobj.height = this.height * _ratio;
+
+        // Center canvas 
+        // https://stackoverflow.com/questions/5127937/how-to-center-canvas-in-html5
+        canvasobj.style.padding = 0
+
+        canvasobj.style.margin = 'auto'
+        canvasobj.style.display="block"; //visible
+        canvasobj.style.position = 'absolute'
+        canvasobj.style.top = 0
+        canvasobj.style.bottom = 0
+        canvasobj.style.left = 0  
+        canvasobj.style.right = 0
+        canvasobj.style.border='1px dotted #E6E6E6' 
+        
+        canvasobj.style.width=this.width+'px'; // Set browser canvas display style to be workspace_width
+        canvasobj.style.height=this.height+'px';
+
+        // Draw blank gray 
+        context.fillStyle="#7F7F7F"; 
+        context.fillRect(0,0,canvasobj.width,canvasobj.height);
+        
+
+        // Remove overflow?
+        //https://www.w3schools.com/cssref/pr_pos_overflow.asp
+
+        context.imageSmoothingEnabled = use_image_smoothing // then nearest neighbor?
 
 
-      context.drawImage(image, original_left_start, original_top_start, PLAYSPACE._gridwidth, PLAYSPACE._gridheight)
+        if(_ratio !== 1){
+          scaleContext(context)
+      }
+} 
 
-
-      var xbound=[original_left_start, original_left_start+PLAYSPACE._gridwidth];
-      var ybound=[original_top_start, original_top_start+PLAYSPACE._gridheight];
-
-      xbound[0]=xbound[0]
-      xbound[1]=xbound[1]
-      ybound[0]=ybound[0]
-      ybound[1]=ybound[1]
-      return [xbound, ybound]
-    }
 
 
 }
+
+
+function scaleContext(context){
+   var devicePixelRatio = window.devicePixelRatio || 1
+   var backingStoreRatio = context.webkitBackingStorePixelRatio ||
+   context.mozBackingStorePixelRatio ||
+   context.msBackingStorePixelRatio ||
+   context.oBackingStorePixelRatio ||
+    context.backingStorePixelRatio || 1 // /1 by default for chrome?
+    var _ratio = devicePixelRatio / backingStoreRatio
+
+    context.scale(_ratio, _ratio) 
+}
+
 
 
 

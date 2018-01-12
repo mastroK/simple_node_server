@@ -115,6 +115,11 @@ class S3_IO{
 
         // Configuring S3: to accept xhttp requests:
         // https://stackoverflow.com/questions/17533888/s3-access-control-allow-origin-header
+        
+        // scrub text url of quotations: 
+        text_url = text_url.replace(/['"]+/g, '')
+
+
         var resolveFunc
         var rejectFunc
         var p = new Promise(function(resolve, reject){
@@ -194,10 +199,10 @@ class DropboxIO{
             localStorage.setItem('_dbxAccessToken', btoa(accessToken))
         }
 
-        var accessToken = await loadStringFromLocalStorage('_dbxAccessToken')
+        var accessToken = await LocalStorageIO.load_string('_dbxAccessToken')
         
         if(accessToken.length<4){ // need a better check for nonsense; add dialogue 
-            var dbx = new Dropbox({clientId: DBX_CLIENT_ID});
+            var dbx = new Dropbox({clientId: INSTALL_SETTINGS.dropboxClientId});
             var dbx_authUrl = dbx.getAuthenticationUrl(DBX_REDIRECT_URI);    
             window.location.href = dbx_authUrl //send to Dropbox sign-in screen
         }
@@ -215,6 +220,8 @@ class DropboxIO{
         this.load_image = this._load_image.bind(this)
         this.changed_on_disk = this._changed_on_disk.bind(this)
         this.get_rev = this._get_rev.bind(this)
+        this.get_meta = this._get_meta.bind(this)
+        this.get_modification_timestamp = this._get_modification_timestamp.bind(this)
         // Need to .bind, because "this" changes its meaning depending on the context in which 
         // a DIO function (or any function) is called. Binding makes it so that "this"
         // always refers to the DIO object, not the "this" of the particular moment (context). 
@@ -263,23 +270,27 @@ class DropboxIO{
             }
 
             
-            for (var q = 0; q <= entries.length-1; q++){
+            for (var q = 0; q < entries.length; q++){
                 if (entries[q][".tag"] == "file") {
-                    file_list.push(entries[q].path_display) //'/'+entries[q].name)
+                    file_list.push([entries[q].path_display, entries[q].client_modified]) //'/'+entries[q].name)
                 }
             }
 
             file_list.sort(function (a,b){
-                if (a > b){
+                if (a[1] > b[1]){
                     return -1;
                 }
-                if (a < b){
+                if (a[1] < b[1]){
                     return 1;
                 }
                 return 0;
-            }); //sort in descending order
+            }); //sort in order of creation date 
 
-            return file_list
+            var path_list = []
+            for (var i = 0; i < file_list.length; i++){
+                path_list.push(file_list[i][0])
+            }
+            return path_list
         }
         catch (error) {
             console.error(error)
@@ -303,10 +314,10 @@ class DropboxIO{
         return new Promise(function(resolve,reject){
             _this.dbx.filesDownload({path: textfile_path})
             .then(function(data){
-                console.log("Read textfile "+textfile_path+" of size " + data.size)
 
                 var reader = new FileReader()
                 reader.onload = function(e){
+                    console.log("Loaded textfile", textfile_path, 'of size', memorySizeOf(reader.result, 1))
                     resolve(reader.result)
                 }
                 reader.readAsText(data.fileBlob)
@@ -389,12 +400,58 @@ class DropboxIO{
         }
     }
 
+    async _get_modification_timestamp(filepath){
+        try{
+            var filemeta = await this.dbx.filesGetMetadata({path: filepath})
+            var date = new Date(filemeta.client_modified)
+            var unix_timestamp = Math.round(date.getTime())
+            return unix_timestamp
+        }
+        catch(error){
+            console.log(error)
+            wdm('DIO._get_modification_date error', error)
+        }
+    }
+
+    async _get_meta(filepath){
+        try{
+            var filemeta = await this.dbx.filesGetMetadata({path: filepath})
+            return filemeta
+        }
+        catch(error){
+            console.log(error)
+            wdm('DIO.get_meta error', error)
+        }
+    }
+
 }
 
 
-async function loadStringFromLocalStorage(key){
-  var string = await localStorage.getItem(key)
-  string = atob(string)
-  //localStorage.removeItem(key);
-  return string
-}
+class LocalStorageIO{
+    constructor(){
+
+    }
+    static async load_string(key){
+      var string = await localStorage.getItem(key)
+      string = atob(string)
+      //localStorage.removeItem(key);
+      return string
+    }
+
+    static async load_json(key){
+      var string = await localStorage.getItem(key)
+      string = atob(string)
+      //localStorage.removeItem(key);
+      return JSON.parse(string)
+    }
+
+    static async write_string(datastr, key){
+        if(datastr.constructor != String){
+            datastr = JSON.stringify(datastr)
+        }
+        await localStorage.setItem(key, btoa(datastr))
+
+    }
+}   
+
+

@@ -1,14 +1,139 @@
-function reloadPage(){
-  wdm("RELOADING PAGE...")
-  location.reload(true)
+function getWindowWidth(){
+    // Reference: https://www.w3schools.com/js/js_window.asp
+    var w = window.innerWidth
+      || document.documentElement.clientWidth
+      || document.body.clientWidth;
+    return w
+}
+
+function getWindowHeight(){
+    // Reference: https://www.w3schools.com/js/js_window.asp
+    var w = window.innerHeight
+      || document.documentElement.clientHeight
+      || document.body.clientHeight;
+    return w
+}
+
+function _dpr(){
+  var devicePixelRatio = window.devicePixelRatio || 1
+  return devicePixelRatio
 }
 
 function wdm(s){
   // Write debug message
   console.log(s)
-  if(FLAGS.debug_mode == 1){
-    var elem = document.getElementById('DebugMessageTextBox')
-    elem.innerHTML = s; // text
+  var elem = document.getElementById('DebugMessageTextBox')
+  elem.innerHTML = s; // text
+}
+
+class np{
+  static mean(arr){
+    var total = 0, i;
+      for (i = 0; i < arr.length; i += 1) {
+          total += arr[i];
+      }
+      return total / arr.length;
+  }
+
+  static sum(arr){
+    var total = 0
+    for (var i = 0; i < arr.length; i ++){
+      total+=arr[i]
+    }
+    return total
+  }
+
+  static choice(arr, n, replace){
+    
+    if(n == undefined){
+      n = 1 
+    }
+
+    if(replace == undefined){
+      replace = true
+    }
+
+    if(arr.constructor != Array){
+      arr = [arr]
+    }
+
+    var idxs = this.arange(arr.length)
+    idxs = shuffle(idxs)
+
+    var result = []
+    for(var i = 0; i < n; i++){
+      result.push(arr[idxs[i]])
+    }
+    
+    if(result.length == 1){
+      result = result[0]
+    }
+    
+    return result
+  }
+
+  static arange(start_, stop, step_){
+    if (stop == undefined && step_ == undefined){
+      stop = start_
+      start_ = 0
+    }
+    if(step_ == undefined){
+      step_ = 1
+    }
+
+
+    var x =[]
+    for (var i = start_; i < stop; i = i+step_){
+      x.push(i)
+    }
+    return x
+  }
+
+  static zeros(n){
+    var x = []
+    for (var i = 0; i < n; i++){
+      x.push(0)
+    }
+    return x
+  }
+
+  static ones(n){
+    var x = []
+    for (var i = 0; i < n; i++){
+      x.push(1)
+    }
+    return x
+  }
+
+  static nans(n){
+    var x = []
+    for (var i = 0; i < n; i++){
+      x.push(NaN)
+    }
+    return x
+  }
+  
+  static xvec(n, x){
+    // populates a vector of length n with x
+    var y = []
+    for (var i = 0; i < n; i++){
+      y.push(x)
+    }
+    return y
+  }
+
+  static iloc(arr, idx){
+    
+    if(idx.constructor != Array){
+      return arr[idx]
+    }
+
+    var x = []
+    for (var i in idx){
+      x.push(arr[idx[i]])
+    }
+
+    return x
   }
 }
 
@@ -99,8 +224,7 @@ function getAllInstancesIndexes(arr, val){
 }
 
 // Shuffles an array
-function shuffle(array, RNGseed) {
-  Math.seedrandom(RNGseed)
+function shuffle(array) {
 
   var currentIndex = array.length, temporaryValue, randomIndex;
 
@@ -123,6 +247,14 @@ function shuffle(array, RNGseed) {
 function cantor(k1, k2){
   // Cantor hash function maps two nonnegative integers into another nonnegative integer 
   // https://stackoverflow.com/questions/919612/mapping-two-integers-to-one-in-a-unique-and-deterministic-way
+  
+  if(k1 == undefined || k2 == undefined){
+    return undefined 
+  }
+
+  if(k1.constructor != Number || k2.constructor != Number){
+    return undefined 
+  }
   
   if (k1 < 0){
     k1 = -1 * k1 * 2 - 1
@@ -163,20 +295,6 @@ function md5Hash(blob){
   var hash = CryptoJS.MD5(CryptoJS.enc.Latin1.parse(blob));
   return hash
 }
-// Promise: choice time-out
-function timeOut(timeout_length){
-  return new Promise(
-    function(resolve, reject){
-      var timer_return = function(){resolve({
-        "x":'timed_out', 
-        "y":'timed_out', 
-        'timestamp':performance.now(), 
-        'reinforcement':0, 
-        'region_index':'timed_out'})}
-
-      setTimeout(timer_return,timeout_length)
-    })
-}
 
 
 String.prototype.hashCode = function(){
@@ -193,7 +311,18 @@ String.prototype.hashCode = function(){
 
 //================== UTILITIES ==================//
 
+function hashJSON(j){
+  // Return JSON hash 
 
+  // Invariant to: 
+  // Order of keys in objects 
+  // Order of elements in arrays containing all strings
+
+  // Subject to: 
+  // Order of elements in arrays containing all numbers 
+
+  // TODO
+}
 
 
 function join(parts, sep){
@@ -219,3 +348,48 @@ function splitFilename(s){
   var filename = s.replace(/^.*[\\\/]/, '')
   return filename
 }
+
+
+// https://stackoverflow.com/questions/1248302/how-to-get-the-size-of-a-javascript-object
+function memorySizeOf(obj, format) {
+    var bytes = 0;
+
+    function sizeOf(obj) {
+        if(obj !== null && obj !== undefined) {
+            switch(typeof obj) {
+            case 'number':
+                bytes += 8;
+                break;
+            case 'string':
+                bytes += obj.length * 2;
+                break;
+            case 'boolean':
+                bytes += 4;
+                break;
+            case 'object':
+                var objClass = Object.prototype.toString.call(obj).slice(8, -1);
+                if(objClass === 'Object' || objClass === 'Array') {
+                    for(var key in obj) {
+                        if(!obj.hasOwnProperty(key)) continue;
+                        sizeOf(obj[key]);
+                    }
+                } else bytes += obj.toString().length * 2;
+                break;
+            }
+        }
+        return bytes;
+    };
+
+    function formatByteSize(bytes) {
+        if(bytes < 1024) return bytes + " bytes";
+        else if(bytes < 1048576) return(bytes / 1024).toFixed(3) + " KiB";
+        else if(bytes < 1073741824) return(bytes / 1048576).toFixed(3) + " MiB";
+        else return(bytes / 1073741824).toFixed(3) + " GiB";
+    };
+
+    if(format == undefined){
+      return sizeOf(obj) 
+    }
+    return formatByteSize(sizeOf(obj));
+};
+
