@@ -1,0 +1,139 @@
+<!doctype html>
+
+<head>
+
+
+
+<script>
+// https://stackoverflow.com/questions/17309199/how-to-send-variables-from-one-file-to-another-in-javascript
+
+// https://stackoverflow.com/questions/5411538/redirect-from-an-html-page
+
+function extractURLdata(){
+
+   // Extract workerId
+    var name = 'workerId'
+    name = name.replace(/[\[]/, "\\[").replace(/[\]]/, "\\]");
+    var regexS = "[\\?&]" + name + "=([^&#]*)";
+    var regex = new RegExp(regexS);
+    var results = regex.exec(window.location.href) || ["", "workerId_notFound"]
+    workerId = results[1];
+
+    // Extract assignmentId
+    name = 'assignmentId'
+  name = name.replace(/[\[]/, "\\[").replace(/[\]]/, "\\]");
+  var regexS = "[\\?&]" + name + "=([^&#]*)";
+  var regex = new RegExp(regexS);
+  console.log(results)
+  var results = regex.exec(window.location.href) || ["", ""]
+  assignmentId = results[1];
+
+  // Extract hitId
+  name = 'hitId'
+  name = name.replace(/[\[]/, "\\[").replace(/[\]]/, "\\]");
+  var regexS = "[\\?&]" + name + "=([^&#]*)";
+  var regex = new RegExp(regexS);
+  console.log(results)
+  var results = regex.exec(window.location.href) || ["", "hitId_not_found"]
+  hitId = results[1];
+
+
+    var SUBJECT = {
+    "SubjectID":'MechanicalTurker_'+workerId,
+    "Species": "human",
+    "assignmentId": assignmentId,
+    'workerId': workerId,
+    'hitId':hitId
+    }
+    return SUBJECT
+}
+
+async function getIP(){
+
+  var resolveFunc
+  var rejectFunc
+  var p = new Promise(function(resolve, reject){
+      resolveFunc = resolve
+      rejectFunc = reject
+  })
+
+  var xhttp = new XMLHttpRequest();
+
+
+  try{
+      xhttp.onreadystatechange = function(){
+          if (this.readyState == 4 && this.status == 200){
+              resolveFunc(this.responseText)
+          }
+      }
+  }
+  catch(error){
+      console.log(error)
+  }
+
+  xhttp.open("GET", "https://api.ipify.org?format=json", true);
+  console.log("xhttp", xhttp)
+
+  xhttp.send();
+  var s = await p
+  s = JSON.parse(s)
+
+  return s['ip']
+
+}
+
+
+async function saveData() {
+  console.log('hello')
+  // Store url to experiment file .txt
+
+  var EXPERIMENT = '{"ImageBags":{"aham":["images/aham.jpg"],"black":["images/black.png"],"corn":["images/corn.jpg"],"earth":["images/earth.jpg"],"green":["images/green.jpg"], "purple":["images/Purple.jpg"],"red":["images/Red.jpeg"]}, "Experiment": [{"initial_TaskStream_trial_number": 0, "Task": "MTS", "SampleGridIndex": 4, "MinTrialsCriterion": 5, "probability_repeat_trial_if_wrong": 0, "TestImageBagNames": ["black", "green", "red", "purple","earth", "aham", "corn"], "NGridPoints": 3, "PunishTimeOut": 5000, "t_SampleON": 250, "ChoiceTimeOut": 2500, "ObjectGridMapping": [2, 8], "t_SampleOFF": 4000, "AverageReturnCriterion": 0, "SampleImageBagNames": ["black", "green", "red", "purple","earth", "aham", "corn"], "StageNickname": "simple_redblack_task", "samplingRNGseed": 0, "Nway": 2}]}'
+  var data = btoa(EXPERIMENT);
+  localStorage.setItem('Experiment_string', data);
+
+
+// Original --- for black and red images
+  //var EXPERIMENT = '{"ImageBags":{"black":["images/black.png"], "red":["images/Red.jpeg"]}, "Experiment": [{"initial_TaskStream_trial_number": 0, "Task": "MTS", "SampleGridIndex": 4, "MinTrialsCriterion": 5, "probability_repeat_trial_if_wrong": 0, "TestImageBagNames": ["black", "red"], "NGridPoints": 3, "PunishTimeOut": 2500, "t_SampleON": 100, "ChoiceTimeOut": 2500, "ObjectGridMapping": [2, 8], "t_SampleOFF": 5000, "AverageReturnCriterion": 0, "SampleImageBagNames": ["black", "red"], "StageNickname": "simple_redblack_task", "samplingRNGseed": 0, "Nway": 2}]}'
+  //var data = btoa(EXPERIMENT);
+  //localStorage.setItem('Experiment_string', data);
+
+
+  // Store mechanical turk settings
+  var mechanical_turk_data = '{"bonus_usd_per_correct": 0.0005, "MAX_SESSION_TRIALS_MECHANICALTURK": 1000, "MinimumTrialsForCashIn": 5, "on_finish": "loop"}'
+  mechanical_turk_data = btoa(mechanical_turk_data)
+  localStorage.setItem('HIT_settings_string', mechanical_turk_data)
+
+  console.log('Landing page href:', window.location.href)
+
+  // Store information sent by Amazon via the current url
+  SUBJECT = extractURLdata()
+  console.log('Landing screen SUBJECT', SUBJECT)
+  localStorage.setItem('SubjectSettings_string', btoa(JSON.stringify(SUBJECT)))
+
+  // Extract ip address
+  var IP = await getIP()
+  console.log("landing screen public IP", IP)
+  localStorage.setItem("IP_address", btoa(IP))
+
+  // Set setup function
+  localStorage.setItem('setupFunction', btoa('setupMechanicalTurkTask()'))
+
+}
+
+
+
+(async function(){
+  await saveData()
+})()
+
+window.location.href = "mkturk.html"//"https://s3.amazonaws.com/monkeyturksandbox/public/mkturk.html"
+
+</script>
+
+
+</head>
+
+<body>
+Loading HIT...
+</body>
+</html>
